@@ -1,22 +1,50 @@
-import os
-from dotenv import load_dotenv
-from openai import OpenAI
+from agente_zoco.tools import ESQUEMAS, ejecutar_herramienta
 
-load_dotenv()
+MODELO = "gpt-4.1-mini"
+intentos= 5
 
-api_key = os.getenv("OPENAI_API_KEY")
+PROMPT = (
+    "Sos el asistente de soporte de ZocoTickets, una plataforma de venta de entradas. "
+    "Respondé en español, de forma breve y clara. "
+    "Si no tenés un dato o una herramienta no devuelve resultados, decilo; no lo inventes. "
+    "Si falta información (por ejemplo una fecha exacta), pedila antes de usar una herramienta."
+)
 
-if not api_key: raise SystemExit("falta la OPENAI_API_KEY en .env")
+class Agente:
+    def __init__(self, client, modelo=MODELO):
+        self.client = client
+        self.modelo = modelo
+        self.historial = [{"role": "system", "content": PROMPT}]
 
-client = OpenAI(api_key=api_key)
+    def responder(self, mensaje: str) -> str:
+        self.historial.append({"role": "user", "content": mensaje})
 
-while True:
-    men = input("Escriba un mensaje (o 'salir' para terminar): ")
+        for _ in range(intentos):
+            respuesta = self.client.responses.create(
+                model=self.modelo,
+                input=self.historial,
+                **self._opciones_herramientas(),
+            )
+            self.historial += respuesta.output
 
-    if men.lower() == "salir".lower(): break
+            llamadas = [i for i in respuesta.output if i.type == "function_call"]
+            if not llamadas:
+                return respuesta.output_text
 
-    respuesta = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role": "user", "content": men}],
-    )
-    print(respuesta.choices[0].message.content)
+            for llamada in llamadas:
+                self.historial.append({
+                    "type": "function_call_output",
+                    "call_id": llamada.call_id,
+                    "output": self._ejecutar(llamada),
+                })
+
+        texto = "La consulta no se puedo completar"
+        self.historial.append({"role": "assistant", "content": texto})
+        return texto
+
+    def _opciones_herramientas(self) -> dict:
+        # se envía tools si hay alguna en Esquemas
+        return {"tools": ESQUEMAS} if ESQUEMAS else {}
+
+    def _ejecutar(self, llamada) -> str:
+        return ejecutar_herramienta(llamada.name, llamada.arguments)
