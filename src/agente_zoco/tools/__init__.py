@@ -1,28 +1,36 @@
 import json
 
-from agente_zoco.tools import buscar_documentacion
+from agente_zoco.tools import buscar_documentacion, consultar_ventas, crear_reclamo
 
-MODULOS = [buscar_documentacion]
+MODULOS = [buscar_documentacion, consultar_ventas, crear_reclamo]
 
 herramientas = {}
 ESQUEMAS = []
 
 for m in MODULOS:
     nombre = m.ESQUEMA["name"]
-    herramientas[nombre] = m  
+    herramientas[nombre] = m
     ESQUEMAS.append(m.ESQUEMA)
 
-def ejecutar_herramienta(nombre: str, argumentos_json: str) -> str:
+def validar_llamada(nombre: str, argumentos_json: str):
+    # devuelve (modulo, argumentos, None) si la llamada respeta el contrato, o (None, None, problema)
     modulo = herramientas.get(nombre)
     if modulo is None:
-        return f"La herramienta '{nombre}' no existe."
+        return None, None, f"La herramienta '{nombre}' no existe."
 
     try:
         argumentos = json.loads(argumentos_json)
     except json.JSONDecodeError:
-        return "Los parametros no son un JSON válido"
+        return None, None, "Los parametros no son un JSON válido"
 
     problema = validar_parametros(modulo.ESQUEMA, argumentos)
+    if problema:
+        return None, None, problema
+    return modulo, argumentos, None
+
+
+def ejecutar_herramienta(nombre: str, argumentos_json: str) -> str:
+    modulo, argumentos, problema = validar_llamada(nombre, argumentos_json)
     if problema:
         return problema
 
@@ -44,4 +52,10 @@ def validar_parametros(esquema: dict, argumentos) -> str | None:
         return f"Argumentos no permitidos: {sorted(extra)}."
     if faltan:
         return f"Faltan argumentos obligatorios: {sorted(faltan)}."
+    for clave, valor in argumentos.items():
+        propiedad = params["properties"][clave]
+        if propiedad.get("type") == "string" and not isinstance(valor, str):
+            return f"El argumento '{clave}' tiene que ser texto."
+        if "enum" in propiedad and valor not in propiedad["enum"]:
+            return f"El argumento '{clave}' tiene que ser uno de {propiedad['enum']}."
     return None
