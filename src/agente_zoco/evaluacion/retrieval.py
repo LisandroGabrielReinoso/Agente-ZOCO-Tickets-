@@ -1,18 +1,25 @@
 #Evaluación de la búsqueda (retrieval) sobre las 20 preguntas de questions.jsonl
-#Compara estrategias de chunking con BM25, imprime la tabla y la guarda en  resultados
+#Compara estrategias de chunking con BM25 y vectorial, imprime la tabla y la guarda en  resultados
 
 import json
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+from openai import OpenAI
 
 from agente_zoco.buscador.bm25 import BM25, tokenizar
 from agente_zoco.buscador.chunking import chunks_por_documento, chunks_por_seccion, chunks_por_ventana
 from agente_zoco.buscador.corpus import cargar_documentos
+from agente_zoco.buscador.embeddings import Embeddings
+from agente_zoco.buscador.vectorial import similitud_coseno
 from agente_zoco.evaluacion.metricas import ranking_de_documentos, recall_at_k, reciprocal_rank
 
-RAIZ = Path(__file__).parents[3] 
+RAIZ = Path(__file__).parents[3]
 CARPETA_DOCS = RAIZ / "docs" / "docs"
 ARCHIVO_PREGUNTAS = RAIZ / "docs" / "questions.jsonl"
 CARPETA_RESULTADOS = RAIZ / "resultados"
+CARPETA_CACHE = RAIZ / "cache" / "embeddings"
 
 
 def cargar_preguntas(ruta) -> list[dict]:
@@ -30,7 +37,15 @@ def evaluar(chunks, preguntas, puntuar) -> tuple[float, float]:
     return sum(recalls) / len(recalls), sum(rrs) / len(rrs)
 
 
-def comparar_chunking_con_bm25(docs, preguntas) -> list[tuple[str, int, float, float]]:
+def crear_embeddings() -> Embeddings:
+    # sin clave igual funciona si todos los vectores ya están en el caché
+    load_dotenv(RAIZ / ".env")
+    api_key = os.getenv("OPENAI_API_KEY")
+    client = OpenAI(api_key=api_key) if api_key else None
+    return Embeddings(client, CARPETA_CACHE)
+
+
+def comparar_chunking(docs, preguntas, embeddings) -> list[tuple]:
     estrategias = {
         "documento": chunks_por_documento(docs),
         "seccion": chunks_por_seccion(docs),
@@ -38,18 +53,28 @@ def comparar_chunking_con_bm25(docs, preguntas) -> list[tuple[str, int, float, f
         "ventana 40/10": chunks_por_ventana(docs, tamano=40, solapamiento=10),
         "ventana 80/20": chunks_por_ventana(docs, tamano=80, solapamiento=20),
     }
+    textos_preguntas = [p["question"] for p in preguntas]
+    vector_de = dict(zip(textos_preguntas, embeddings.vectores(textos_preguntas)))
+
     filas = []
     for nombre, chunks in estrategias.items():
         bm25 = BM25([tokenizar(c.texto) for c in chunks])
-        recall, mrr = evaluar(chunks, preguntas, lambda q: bm25.puntajes(tokenizar(q)))
-        filas.append((nombre, len(chunks), recall, mrr))
+        matriz = embeddings.vectores([c.texto for c in chunks])
+        recall_bm25, mrr_bm25 = evaluar(chunks, preguntas, lambda q: bm25.puntajes(tokenizar(q)))
+        recall_vec, mrr_vec = evaluar(chunks, preguntas, lambda q: similitud_coseno(vector_de[q], matriz))
+        filas.append((nombre, len(chunks), recall_bm25, mrr_bm25, recall_vec, mrr_vec))
     return filas
 
 
 def tabla(filas) -> str:
-    lineas = ["| chunking | chunks | recall@3 | MRR |", "|---|---:|---:|---:|"]
-    for nombre, n_chunks, recall, mrr in filas:
-        lineas.append(f"| {nombre} | {n_chunks} | {recall:.3f} | {mrr:.3f} |")
+    lineas = [
+        "| chunking | chunks | BM25 recall@3 | BM25 MRR | vectorial recall@3 | vectorial MRR |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for nombre, n_chunks, recall_bm25, mrr_bm25, recall_vec, mrr_vec in filas:
+        lineas.append(
+            f"| {nombre} | {n_chunks} | {recall_bm25:.3f} | {mrr_bm25:.3f} | {recall_vec:.3f} | {mrr_vec:.3f} |"
+        )
     return "\n".join(lineas) + "\n"
 
 
@@ -57,11 +82,11 @@ def main():
     docs = cargar_documentos(CARPETA_DOCS)
     preguntas = cargar_preguntas(ARCHIVO_PREGUNTAS)
 
-    texto = tabla(comparar_chunking_con_bm25(docs, preguntas))
+    texto = tabla(comparar_chunking(docs, preguntas, crear_embeddings()))
     print(texto)
 
     CARPETA_RESULTADOS.mkdir(exist_ok=True)
-    salida = CARPETA_RESULTADOS / "chunking_bm25.md"
+    salida = CARPETA_RESULTADOS / "chunking.md"
     salida.write_text(texto, encoding="utf-8")
     print(f"Guardado en {salida.relative_to(RAIZ)}")
 
