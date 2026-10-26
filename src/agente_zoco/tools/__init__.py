@@ -1,6 +1,8 @@
 import json
 
-MODULOS = []
+from agente_zoco.tools import buscar_documentacion
+
+MODULOS = [buscar_documentacion]
 
 herramientas = {}
 ESQUEMAS = []
@@ -13,7 +15,7 @@ for m in MODULOS:
 def ejecutar_herramienta(nombre: str, argumentos_json: str) -> str:
     modulo = herramientas.get(nombre)
     if modulo is None:
-        return print(f"La herramienta '{nombre}' no existe")
+        return f"La herramienta '{nombre}' no existe."
 
     try:
         argumentos = json.loads(argumentos_json)
