@@ -1,4 +1,4 @@
-#Máquina de estados IA-humano: aplica δ, valida quién dispara cada evento y registra cada transición
+#Máquina de estados ia-humano: aplica δ, valida quién dispara cada evento y registra cada transición
 
 from datetime import datetime
 from typing import NamedTuple
@@ -6,19 +6,15 @@ from typing import NamedTuple
 from agente_zoco.maquina.estados import ESTADOS, Estado
 from agente_zoco.maquina.transiciones import TRANSICIONES
 
-
 class TransicionInvalida(Exception):
     pass
 
-
 class Transicion(NamedTuple):
-    # una entrada del registro (regla 5)
     anterior: str
     nuevo: str
     evento: str
     actor: str
     fecha: datetime
-
 
 class MaquinaDeEstados:
     def __init__(self, inicial: str = "AUTO"):
@@ -31,7 +27,7 @@ class MaquinaDeEstados:
         return ESTADOS[self.actual]
 
     def transicionar(self, evento: str, actor: str, fecha: datetime | None = None) -> Estado:
-        # si algo no cierra se lanza el error antes de tocar el estado: nunca se ignora en silencio
+        # si algo no cierra se lanza el error antes de tocar el estado
         if (self.actual, evento) not in TRANSICIONES:
             raise TransicionInvalida(f"No hay transición desde {self.actual} con el evento {evento}.")
         nuevo, actores = TRANSICIONES[(self.actual, evento)]
